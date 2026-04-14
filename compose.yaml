@@ -1,0 +1,12 @@
+services:
+  csv-to-graph:
+    build: .
+    environment:
+      INPUT_DIR: ${INPUT_DIR:-/app/input}
+      OUTPUT_DIR: ${OUTPUT_DIR:-/app/output}
+      FIGURE_WIDTH: ${FIGURE_WIDTH:-14}
+      FIGURE_HEIGHT: ${FIGURE_HEIGHT:-8}
+      CHART_TITLE_PREFIX: ${CHART_TITLE_PREFIX:-}
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
