@@ -1,74 +1,121 @@
 # CSV to Graph
 
-心理検査ログの CSV を `input/` に入れ、`docker compose up -d` で `output/` に折れ線 PNG を生成する構成です。
+This app reads psychological test log CSV files from `input/` and generates line-chart PNG files in `output/`.
 
-既存アプリの CSV 仕様を参照し、以下の 5 系統に合わせて自動判定します。
+It is designed to run with Docker Compose and automatically detects the CSV format based on the filename and column structure.
 
-- `cft_test_log.csv` / `cft_extension_log.csv`
+## Supported CSV Formats
+
+The current implementation supports these log types:
+
+- `cft_test_log.csv`
+- `cft_extension_log.csv`
 - `pitch_glide_test_log.csv`
 - `fm_detection_test_log.csv`
 - `two_point_orientation_discrimination_log.csv`
 - `two_point_discrimination_log.csv`
 
-## 使い方
+## How It Works
 
-1. CSV を `input/` に置く
-2. 次を実行する
+- All `*.csv` files in `input/` are processed in order.
+- The app tries these encodings when reading each file:
+  - `utf-8-sig`
+  - `utf-8`
+  - `cp932`
+- The CSV type is auto-detected from the filename or required columns.
+- A chart is generated to match the progress-graph style expected for each test app.
+- Output PNG files are saved to `output/`.
+- If some files cannot be processed, the app prints a failure list and exits with a non-zero status.
+
+## Usage
+
+1. Put one or more CSV files into `input/`.
+2. Run:
 
 ```bash
 docker compose up -d --build
 ```
 
-生成結果は `output/` に保存されます。
+Generated PNG files will be written to `output/`.
 
-設定を変えたい場合だけ `.env.example` を `.env` にコピーして使います。`.env` がなくても起動できます。
+If you want to override the default settings, create a `.env` file. The app also runs without `.env`.
 
-## ディレクトリ
+## Directory Layout
 
-- `input/`: 元の CSV
-- `output/`: 生成された PNG
+- `input/`: source CSV files
+- `output/`: generated PNG files
+- `generate_graphs.py`: batch renderer
+- `compose.yaml`: Docker Compose configuration
+- `Dockerfile`: runtime image definition
 
-## デフォルト動作
+## Output Behavior by Format
 
-- `input/` 配下の `*.csv` を順番に処理
-- CSV名と列構成から検査種別を自動判定
-- 各検査アプリの進捗グラフ仕様に寄せて描画
-- 文字コードは `utf-8-sig`, `utf-8`, `cp932` を順に試行
-- 出力先は `output/`
+### Click Fusion Test
 
-## 出力されるグラフ
+- Target rows: `stim_kind == 2`
+- X-axis: `two_trial_index` when available, otherwise sequential index
+- Y-axis: `gap_ms`
+- Markers:
+  - `reversal`
+  - `small_reversal` or inferred small-step reversal from `step_mode`
 
-- `click-fusion-test`
-  - `stim_kind == 2` のみを対象
-  - 横軸: `two_trial_index`
-  - 縦軸: `gap_ms`
-  - marker: `reversal`, `small_reversal`
-- `pitch-glide-direction-threshold`
-  - `trial_type == glide` のみを対象
-  - 横軸: `n_updates_glide`
-  - 縦軸: `D_ms_presented`
-  - marker: big-step / small-step reversal
-  - 可能なら threshold 参照線も描画
-- `frequency-modulation-auditory-test`
-  - `trial_type == rough` のみを対象
-  - 横軸: `rough_trial_no`
-  - 縦軸: `mi`
-  - marker: big-step / small-step reversal
-  - 可能なら threshold 参照線も描画
-- `two-point-orientation-discrimination`
-  - `phase == test` を対象
-  - `phase_run` ごとに別PNG
-  - 横軸: `phase_trial`
-  - 縦軸: `size_mm`
-  - marker: reversal 前半4回 / 後半
-- `2pd`
-  - `phase == test` かつ `stimulus_presented_code == 2` を対象
-  - `phase_run` ごとに別PNG
-  - 横軸: `two_trial_index`
-  - 縦軸: `size_mm`
-  - marker: reversal 前半4回 / 後半
+### Click Fusion Extension
 
-## `.env` で変更できる項目
+- X-axis: sequential index
+- Y-axis: `gap_ms`
+- Markers:
+  - `correct`
+  - `incorrect`
+
+### Pitch Glide Test
+
+- Target rows: `trial_type == "glide"`
+- X-axis: `n_updates_glide`, or `glide_no_planned`, or sequential index
+- Y-axis: `D_ms_presented`
+- Markers:
+  - big-step reversal
+  - small-step reversal
+- Reference line:
+  - median threshold from the latest six small-step reversals when available
+  - otherwise the last `threshold_live_median` value if present
+
+### Frequency Modulation Detection Test
+
+- Target rows: `trial_type == "rough"`
+- X-axis: `rough_trial_no` when available, otherwise sequential index
+- Y-axis: `mi`
+- Markers:
+  - big-step reversal
+  - small-step reversal
+- Reference line:
+  - median threshold from the latest six small-step reversals when available
+  - otherwise the last `threshold_live_mi` value if present
+
+### Two-Point Orientation Discrimination
+
+- Target rows: `phase == "test"`
+- Output: one PNG per `phase_run`
+- X-axis: `phase_trial`
+- Y-axis: `size_mm`
+- Markers:
+  - first 4 reversals
+  - reversals after the first 4
+
+### Two-Point Discrimination
+
+- Target rows:
+  - `phase == "test"`
+  - `stimulus_presented_code == 2`
+- Output: one PNG per `phase_run`
+- X-axis: `two_trial_index`
+- Y-axis: `size_mm`
+- Markers:
+  - first 4 reversals
+  - reversals after the first 4
+
+## Environment Variables
+
+You can change these values with a `.env` file:
 
 ```env
 INPUT_DIR=/app/input
@@ -78,13 +125,18 @@ FIGURE_HEIGHT=8
 CHART_TITLE_PREFIX=
 ```
 
-- `CHART_TITLE_PREFIX`: グラフタイトル先頭に付ける文字列
+- `INPUT_DIR`: directory containing source CSV files
+- `OUTPUT_DIR`: directory for generated PNG files
+- `FIGURE_WIDTH`: chart width
+- `FIGURE_HEIGHT`: chart height
+- `CHART_TITLE_PREFIX`: optional prefix added to chart titles
 
-## 想定 CSV
+## Runtime Notes
 
-- 1 行が 1 回の記録
-- 例: `timestamp, patient_id, score`
-- 横軸列は日時または連番を想定
-- 縦軸列は数値である必要があります
+- The Docker image installs `fonts-noto-cjk` so charts can render Japanese labels correctly.
+- The renderer uses `matplotlib` with the non-interactive `Agg` backend.
+- Dependencies are minimal: `pandas` and `matplotlib`.
 
-未対応の CSV はエラーとして一覧表示します。必要なら対象アプリを追加できます。
+## Unsupported CSV Files
+
+If a CSV file does not match any supported format, it is reported as unsupported and included in the failure summary.
